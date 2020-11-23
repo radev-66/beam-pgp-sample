@@ -14,7 +14,8 @@ import java.security.NoSuchProviderException;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.io.FileIO;
 import org.apache.beam.sdk.io.FileIO.ReadableFile;
-import org.apache.beam.sdk.options.Default;
+import org.apache.beam.sdk.io.FileSystems;
+import org.apache.beam.sdk.io.fs.ResourceId;
 import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
@@ -34,7 +35,7 @@ public class ProcessEncryptedFile {
 
 	private static final Logger logger = LoggerFactory.getLogger(ProcessEncryptedFile.class);
 
-	private static final class ReadFromDecryptedFile extends DoFn<ReadableFile, String> {
+	private static final class ReadFromEncryptedFile extends DoFn<ReadableFile, String> {
 		
 		
 		private String privateKeyPath;
@@ -44,7 +45,7 @@ public class ProcessEncryptedFile {
 		
 		
 
-		public ReadFromDecryptedFile(String privateKeyPath, String privateKeyPasswd) {
+		public ReadFromEncryptedFile(String privateKeyPath, String privateKeyPasswd) {
 			super();
 			this.privateKeyPath = privateKeyPath;
 			this.privateKeyPasswd = privateKeyPasswd;
@@ -60,21 +61,34 @@ public class ProcessEncryptedFile {
 
 			PGPDecrypt decrypt = new PGPDecrypt();
 			InputStream decryptedInputStream;
+
+
+
 			try (ReadableByteChannel open = input.open();
-					InputStream newInputStream = Channels.newInputStream(open);
-					InputStream keyIn = new BufferedInputStream(
-							new FileInputStream(this.privateKeyPath));) {
+					InputStream newInputStream = Channels.newInputStream(open)) {
+				
+				ResourceId existingFileResourceId = FileSystems
+					    .matchSingleFileSpec(this.privateKeyPath)
+					    .resourceId();
 
-				decryptedInputStream = decrypt.getDecryptedInputStream(newInputStream, keyIn, this.privateKeyPasswd.toCharArray());
-				BufferedReader reader = new BufferedReader(new InputStreamReader(decryptedInputStream));
-
-				String line = null;
-				while ((line = reader.readLine()) != null) {
-					receiver.output(line);
-				}
+				
+			    try (ReadableByteChannel keyFileChannel = FileSystems.open(existingFileResourceId);					
+			    InputStream keyIn = new BufferedInputStream(Channels.newInputStream(keyFileChannel))) {
+				
+					decryptedInputStream = decrypt.getDecryptedInputStream(newInputStream, keyIn, this.privateKeyPasswd.toCharArray());
+					BufferedReader reader = new BufferedReader(new InputStreamReader(decryptedInputStream));
+	
+					String line = null;
+					while ((line = reader.readLine()) != null) {
+						receiver.output(line);
+					}
+			    }
 
 			} catch (NoSuchProviderException | PGPException | IOException e) {
 				logger.error("Error reading or decrypting file: {}", input.getMetadata().resourceId().getFilename());
+				logger.error("Exception Decrypting ", e);
+				e.printStackTrace();
+				throw new RuntimeException(e);
 			}
 
 		}
@@ -93,7 +107,8 @@ public class ProcessEncryptedFile {
 		void setInputFilePattern(String value);
 
 		@Description("Path of the file to read from")
-		@Default.String("gs://encrypted-files/*.out")
+		//@Default.String("gs://encrypted-files/*.out")
+		@Required
 		String getInputFilePattern();
 
 		/** Set this required option to specify where to write the output. */
@@ -177,8 +192,10 @@ public class ProcessEncryptedFile {
 
 				return builder.toString();
 			} catch (NoSuchProviderException | PGPException | IOException e) {
-				logger.error("Error reading or decrypting file: {}", input.getMetadata().resourceId().getFilename());
-				return null;
+				logger.error("Error reading or decrypting file: {} {} ", input.getMetadata().resourceId().getFilename(), e);
+				logger.error("Exception ", e);
+				e.printStackTrace();
+				throw new RuntimeException(e);
 			}
 
 		}
@@ -199,7 +216,7 @@ public class ProcessEncryptedFile {
 		Pipeline p = Pipeline.create(options);
 
 		p.apply(FileIO.match().filepattern(options.getInputFilePattern())).apply(FileIO.readMatches())
-				.apply(ParDo.of(new ReadFromDecryptedFile(options.getPrivateKeyPath(), options.getPrivateKeyPasswd())))
+				.apply(ParDo.of(new ReadFromEncryptedFile(options.getPrivateKeyPath(), options.getPrivateKeyPasswd())))
 
 				.apply(ParDo.of(new DoFn<String, Void>() {
 

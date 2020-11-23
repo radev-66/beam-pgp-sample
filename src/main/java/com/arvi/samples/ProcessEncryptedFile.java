@@ -15,6 +15,7 @@ import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.io.FileIO;
 import org.apache.beam.sdk.io.FileIO.ReadableFile;
 import org.apache.beam.sdk.io.FileSystems;
+import org.apache.beam.sdk.io.TextIO;
 import org.apache.beam.sdk.io.fs.ResourceId;
 import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
@@ -217,16 +218,16 @@ public class ProcessEncryptedFile {
 
 		p.apply(FileIO.match().filepattern(options.getInputFilePattern())).apply(FileIO.readMatches())
 				.apply(ParDo.of(new ReadFromEncryptedFile(options.getPrivateKeyPath(), options.getPrivateKeyPasswd())))
-
-				.apply(ParDo.of(new DoFn<String, Void>() {
+				
+/*				.apply(ParDo.of(new DoFn<String, Void>() {
 
 					@ProcessElement
 					public void processElement(@Element String input, OutputReceiver<Void> receiver) {
-						logger.info("Processed line {}", input);
+						logger.debug("Processed line {}", input);
 					}
 				}))
-
-				// .apply(TextIO.write().to(options.getOutput()))
+*/
+				.apply(TextIO.write().to(options.getOutput()))
 				;
 		p.run().waitUntilFinish();
 	}
